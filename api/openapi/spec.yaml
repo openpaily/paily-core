@@ -1,0 +1,1329 @@
+openapi: "3.0.3"
+info:
+  title: Paily Connect Core
+  version: "1.0.0"
+  description: >
+    Proxy node aggregation, filtering and distribution service.
+    Fetcher and Checker authenticate with Bearer service-secret.
+    Admin endpoints accept either a Bearer JWT (obtained via /api/v1/auth/login)
+    or the shared service-secret Bearer token.
+
+servers:
+  - url: /
+  # Default security: admin endpoints accept AdminJWT OR ServiceBearer (OR = separate list entries).
+  # Public endpoints and ServiceBearer-only endpoints override this with their own security field.
+security:
+  - AdminJWT: []
+  - ServiceBearer: []
+
+components:
+  securitySchemes:
+    AdminJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ServiceBearer:
+      type: http
+      scheme: bearer
+
+  schemas:
+    # ── Pagination ──────────────────────────────────────────────────────────
+    PaginationInfo:
+      type: object
+      required: [page, limit, total, total_pages]
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 20 }
+        total: { type: integer, format: int64, example: 342 }
+        total_pages: { type: integer, example: 18 }
+
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string }
+
+    LoginResponse:
+      type: object
+      required: [token, refresh_token]
+      properties:
+        token: { type: string }
+        refresh_token: { type: string }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    RefreshResponse:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+
+    # ── Source ───────────────────────────────────────────────────────────────
+    SourceSummary:
+      type: object
+      required: [id, type, identifier, info, status]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [subscribe, node] }
+        identifier: { type: string }
+        info: { type: string }
+        status: { type: string, enum: [active, dead] }
+        ignore_dead: { type: boolean }
+        content: { type: string }
+        latest_fetch_node_count:
+          {
+            type: integer,
+            description: "Node count from the most recent successful fetch (subscribe sources only)",
+          }
+
+    SourceDetail:
+      allOf:
+        - $ref: "#/components/schemas/SourceSummary"
+        - type: object
+          properties:
+            content: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    SourceCreateRequest:
+      type: object
+      required: [type, content]
+      properties:
+        type: { type: string, enum: [subscribe, node] }
+        identifier: { type: string }
+        info: { type: string }
+        content: { type: string }
+
+    SourceUpdateRequest:
+      type: object
+      properties:
+        identifier: { type: string }
+        info: { type: string }
+        content: { type: string }
+
+    SourceIgnoreDeadRequest:
+      type: object
+      required: [ignore_dead]
+      properties:
+        ignore_dead: { type: boolean }
+
+    SourceListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          { type: array, items: { $ref: "#/components/schemas/SourceSummary" } }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    SourceSearchRequest:
+      type: object
+      properties:
+        expr: { type: string }
+        page: { type: integer, default: 1 }
+        limit: { type: integer, default: 20 }
+
+    # ── Node ─────────────────────────────────────────────────────────────────
+    NodeSummary:
+      type: object
+      required: [id, hash, server, protocol, region, alive, score]
+      properties:
+        id: { type: string, format: uuid }
+        hash: { type: string }
+        server: { type: string }
+        protocol: { type: string }
+        region: { type: string }
+        alive: { type: boolean }
+        score: { type: number, format: double }
+        latest_latency_ms: { type: integer }
+        latest_avg_latency_ms: { type: integer }
+        latest_jitter_ms: { type: integer }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/SourceSummary" }
+
+    DeepCheckRecord:
+      type: object
+      required:
+        [
+          id,
+          avg_latency_ms,
+          jitter_ms,
+          speed_kbps,
+          streaming_result,
+          checked_at,
+        ]
+      properties:
+        id: { type: integer }
+        avg_latency_ms: { type: integer }
+        jitter_ms: { type: integer }
+        speed_kbps: { type: integer }
+        streaming_result:
+          { type: object, additionalProperties: { type: boolean } }
+        metadata: { type: object, additionalProperties: true }
+        checked_at: { type: string, format: date-time }
+        checker_tag: { type: string }
+        check_run_id: { type: string, format: uuid }
+
+    InitialCheckRecord:
+      type: object
+      required: [id, latency_ms, checked_at]
+      properties:
+        id: { type: integer }
+        latency_ms: { type: integer }
+        checked_at: { type: string, format: date-time }
+        checker_tag: { type: string }
+        check_run_id: { type: string, format: uuid }
+
+    NodeDetail:
+      allOf:
+        - $ref: "#/components/schemas/NodeSummary"
+        - type: object
+          properties:
+            password: { type: string }
+            raw: { type: object, additionalProperties: true }
+            latest_deep_check:
+              $ref: "#/components/schemas/DeepCheckRecord"
+            tag_scores:
+              type: object
+              additionalProperties: { type: number, format: double }
+            latest_deep_check_by_tag:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/DeepCheckRecord"
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    CheckerListResponse:
+      type: object
+      required: [checkers]
+      properties:
+        checkers:
+          type: array
+          items: { type: string }
+
+    StatsResponse:
+      type: object
+      required: [total_nodes, alive_nodes, total_sources, dead_sources]
+      properties:
+        total_nodes:
+          {
+            type: integer,
+            description: "Total number of nodes in the database",
+          }
+        alive_nodes:
+          {
+            type: integer,
+            description: "Number of nodes currently marked as alive",
+          }
+        total_sources: { type: integer, description: "Total number of sources" }
+        dead_sources:
+          { type: integer, description: "Number of sources with status=dead" }
+
+    NodeListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          { type: array, items: { $ref: "#/components/schemas/NodeSummary" } }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    NodeSearchRequest:
+      type: object
+      properties:
+        expr: { type: string }
+        page: { type: integer, default: 1 }
+        limit: { type: integer, default: 20 }
+
+    InitialCheckListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/InitialCheckRecord" },
+          }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    DeepCheckListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/DeepCheckRecord" },
+          }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    # ── Fetch ─────────────────────────────────────────────────────────────────
+    FetchSourcesResponse:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/SourceDetail" }
+
+    FetchResult:
+      type: object
+      required: [source_id, success]
+      properties:
+        source_id: { type: string, format: uuid }
+        success: { type: boolean }
+        node_count: { type: integer }
+        nodes:
+          type: array
+          items: { type: object, additionalProperties: true }
+
+    FetchResultsRequest:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/FetchResult" }
+
+    # ── Check ─────────────────────────────────────────────────────────────────
+    CheckNodesResponse:
+      type: object
+      required: [nodes]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, hash, server, protocol]
+            properties:
+              id: { type: string, format: uuid }
+              hash: { type: string }
+              server: { type: string }
+              protocol: { type: string }
+              raw: { type: object, additionalProperties: true }
+
+    CheckInitialResult:
+      type: object
+      required: [latency_ms]
+      properties:
+        latency_ms: { type: integer }
+
+    CheckDeepResult:
+      type: object
+      required: [avg_latency_ms, jitter_ms]
+      properties:
+        avg_latency_ms: { type: integer }
+        jitter_ms: { type: integer }
+        speed_kbps: { type: integer, default: 0 }
+        region: { type: string }
+        streaming: { type: object, additionalProperties: { type: boolean } }
+        metadata: { type: object, additionalProperties: true }
+
+    CheckResult:
+      type: object
+      required: [node_id, initial]
+      properties:
+        node_id: { type: string, format: uuid }
+        initial: { $ref: "#/components/schemas/CheckInitialResult" }
+        deep: { $ref: "#/components/schemas/CheckDeepResult" }
+
+    CheckResultsRequest:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/CheckResult" }
+
+    # ── Sponsor ───────────────────────────────────────────────────────────────
+    SponsorSummary:
+      type: object
+      required: [id, name, text, filter_expr, priority]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        text: { type: string }
+        filter_expr: { type: string }
+        priority: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SponsorCreateRequest:
+      type: object
+      required: [name, text, filter_expr, priority]
+      properties:
+        name: { type: string }
+        text: { type: string }
+        filter_expr: { type: string }
+        priority: { type: integer }
+
+    SponsorUpdateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        text: { type: string }
+        filter_expr: { type: string }
+        priority: { type: integer }
+
+    SponsorListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/SponsorSummary" },
+          }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    # ── Config ────────────────────────────────────────────────────────────────
+    ConfigMap:
+      type: object
+      additionalProperties: { type: string }
+
+    # ── Logs ──────────────────────────────────────────────────────────────────
+    FetchLogEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        source_id: { type: string, format: uuid }
+        success: { type: boolean }
+        node_count: { type: integer }
+        fetched_at: { type: string, format: date-time }
+
+    CheckLogEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        node_id: { type: string, format: uuid }
+        latency_ms: { type: integer }
+        checked_at: { type: string, format: date-time }
+
+    FetchLogListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          { type: array, items: { $ref: "#/components/schemas/FetchLogEntry" } }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    CheckLogListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          { type: array, items: { $ref: "#/components/schemas/CheckLogEntry" } }
+        pagination: { $ref: "#/components/schemas/PaginationInfo" }
+
+    # ── Filter ────────────────────────────────────────────────────────────────
+    FilterPreviewRequest:
+      type: object
+      required: [expr, target]
+      properties:
+        expr: { type: string }
+        target: { type: string, enum: [node, source] }
+
+    FilterPreviewResponse:
+      type: object
+      properties:
+        nodes:
+          { type: array, items: { $ref: "#/components/schemas/NodeSummary" } }
+        sources:
+          { type: array, items: { $ref: "#/components/schemas/SourceSummary" } }
+
+    # ── FormatConfig ──────────────────────────────────────────────────────────
+    FormatConfigEntry:
+      type: object
+      required: [format_name, config]
+      properties:
+        format_name: { type: string }
+        config: { type: object, additionalProperties: true }
+        updated_at: { type: string, format: date-time }
+
+    FormatConfigUpdateRequest:
+      type: object
+      required: [config]
+      properties:
+        config: { type: object, additionalProperties: true }
+
+    # ── Error ─────────────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+paths:
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /api/v1/auth/login:
+    post:
+      operationId: AuthLogin
+      tags: [auth]
+      summary: Admin login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401":
+          description: Invalid password
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: AuthRefresh
+      tags: [auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RefreshResponse" }
+        "401":
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Fetch ──────────────────────────────────────────────────────────────────
+  /api/v1/fetch/sources:
+    get:
+      operationId: FetchGetSources
+      tags: [fetch]
+      summary: Get all active sources for fetcher
+      security: [{ ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FetchSourcesResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/fetch/results:
+    post:
+      operationId: FetchPostResults
+      tags: [fetch]
+      summary: Submit fetch results from fetcher
+      security: [{ ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FetchResultsRequest" }
+      responses:
+        "200": { description: Accepted }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  # ── Check ──────────────────────────────────────────────────────────────────
+  /api/v1/check/nodes:
+    get:
+      operationId: CheckGetNodes
+      tags: [check]
+      summary: Get all node metadata for checker
+      security: [{ ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckNodesResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/check/results:
+    post:
+      operationId: CheckPostResults
+      tags: [check]
+      summary: Submit check results from checker
+      security: [{ ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckResultsRequest" }
+      responses:
+        "200": { description: Accepted }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  # ── Sources ────────────────────────────────────────────────────────────────
+  /api/v1/sources:
+    post:
+      operationId: SourceCreate
+      tags: [sources]
+      summary: Catcher submits a new source (deduped by type+content)
+      security: [{ ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceCreateRequest" }
+      responses:
+        "200": { description: Already exists (no-op) }
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceDetail" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+    get:
+      operationId: SourceList
+      tags: [sources]
+      summary: List sources with optional filters
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - {
+            name: type,
+            in: query,
+            schema: { type: string, enum: [subscribe, node] },
+          }
+        - {
+            name: status,
+            in: query,
+            schema: { type: string, enum: [active, dead] },
+          }
+        - { name: identifier, in: query, schema: { type: string } }
+        - { name: info, in: query, schema: { type: string } }
+        - {
+            name: sort_by,
+            in: query,
+            schema: { type: string, enum: [node_count] },
+            description: "Sort field (default: created_at desc)",
+          }
+        - {
+            name: sort_dir,
+            in: query,
+            schema: { type: string, enum: [asc, desc], default: desc },
+            description: "Sort direction",
+          }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceListResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/sources/search:
+    post:
+      operationId: SourceSearch
+      tags: [sources]
+      summary: Search sources using an expr expression
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceSearchRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceListResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/sources/{id}:
+    parameters:
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    get:
+      operationId: SourceGet
+      tags: [sources]
+      summary: Get source detail
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceDetail" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      operationId: SourceUpdate
+      tags: [sources]
+      summary: Update source identifier/info
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceUpdateRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceDetail" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    delete:
+      operationId: SourceDelete
+      tags: [sources]
+      summary: Delete a source and cascade-remove orphaned nodes
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/sources/{id}/nodes:
+    get:
+      operationId: SourceGetNodes
+      tags: [sources]
+      summary: List nodes contributed by this source (traceability)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeListResponse" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/sources/{id}/ignore-dead:
+    post:
+      operationId: SourceIgnoreDead
+      tags: [sources]
+      summary: Toggle ignore_dead flag for a source
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SourceIgnoreDeadRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SourceDetail" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Nodes ──────────────────────────────────────────────────────────────────
+  /api/v1/checkers:
+    get:
+      operationId: CheckerList
+      tags: [checkers]
+      summary: List configured checker tags
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckerListResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/nodes:
+    get:
+      operationId: NodeList
+      tags: [nodes]
+      summary: List nodes with optional filters
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - { name: alive, in: query, schema: { type: boolean } }
+        - {
+            name: region,
+            in: query,
+            schema: { type: string },
+            description: "Comma-separated region codes",
+          }
+        - {
+            name: protocol,
+            in: query,
+            schema: { type: string },
+            description: "Comma-separated protocols",
+          }
+        - {
+            name: server,
+            in: query,
+            schema: { type: string },
+            description: "Fuzzy match",
+          }
+        - { name: source_id, in: query, schema: { type: string, format: uuid } }
+        - { name: min_score, in: query, schema: { type: number } }
+        - { name: max_score, in: query, schema: { type: number } }
+        - {
+            name: has_streaming,
+            in: query,
+            schema: { type: string },
+            description: "Comma-separated service names, all must match",
+          }
+        - {
+            name: tag,
+            in: query,
+            schema: { type: string },
+            description: "Filter by checker tag",
+          }
+        - {
+            name: sort_by,
+            in: query,
+            schema: { type: string, enum: [region, score] },
+            description: "Sort field (default: created_at desc)",
+          }
+        - {
+            name: sort_dir,
+            in: query,
+            schema: { type: string, enum: [asc, desc], default: desc },
+            description: "Sort direction",
+          }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeListResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/nodes/search:
+    post:
+      operationId: NodeSearch
+      tags: [nodes]
+      summary: Search nodes using an expr expression
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NodeSearchRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeListResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/nodes/{id}:
+    parameters:
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    get:
+      operationId: NodeGet
+      tags: [nodes]
+      summary: Get node detail with latest deep check and source list
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDetail" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    delete:
+      operationId: NodeDelete
+      tags: [nodes]
+      summary: Manually delete a node
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/nodes/{id}/checks/initial:
+    get:
+      operationId: NodeGetInitialChecks
+      tags: [nodes]
+      summary: Get initial check history for a node (paginated, newest first)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - {
+            name: tag,
+            in: query,
+            schema: { type: string },
+            description: "Filter by checker tag",
+          }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InitialCheckListResponse" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/nodes/{id}/checks/deep:
+    get:
+      operationId: NodeGetDeepChecks
+      tags: [nodes]
+      summary: Get deep check history for a node (paginated, newest first)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+        - {
+            name: tag,
+            in: query,
+            schema: { type: string },
+            description: "Filter by checker tag",
+          }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeepCheckListResponse" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Filter preview ─────────────────────────────────────────────────────────
+  /api/v1/filter/preview:
+    post:
+      operationId: FilterPreview
+      tags: [filter]
+      summary: Preview expr expression against nodes or sources (max 100, no pagination)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FilterPreviewRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FilterPreviewResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  # ── Sponsors ───────────────────────────────────────────────────────────────
+  /api/v1/sponsors:
+    get:
+      operationId: SponsorList
+      tags: [sponsors]
+      summary: List sponsors
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SponsorListResponse" }
+        "401": { description: Unauthorized }
+    post:
+      operationId: SponsorCreate
+      tags: [sponsors]
+      summary: Create a sponsor
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SponsorCreateRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SponsorSummary" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/sponsors/{id}:
+    parameters:
+      - {
+          name: id,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
+    get:
+      operationId: SponsorGet
+      tags: [sponsors]
+      summary: Get sponsor detail
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SponsorSummary" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      operationId: SponsorUpdate
+      tags: [sponsors]
+      summary: Update a sponsor
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SponsorUpdateRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SponsorSummary" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    delete:
+      operationId: SponsorDelete
+      tags: [sponsors]
+      summary: Delete a sponsor
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Config ─────────────────────────────────────────────────────────────────
+  /api/v1/stats:
+    get:
+      operationId: StatsGet
+      tags: [admin]
+      summary: Get aggregate statistics (node counts, source counts)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatsResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/config:
+    get:
+      operationId: ConfigGet
+      tags: [config]
+      summary: Get all runtime config key-value pairs
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigMap" }
+        "401": { description: Unauthorized }
+    put:
+      operationId: ConfigUpdate
+      tags: [config]
+      summary: Bulk-update config key-value pairs
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigMap" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigMap" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  # ── Logs ───────────────────────────────────────────────────────────────────
+  /api/v1/logs/fetch:
+    get:
+      operationId: LogFetchList
+      tags: [logs]
+      summary: List fetch history logs (newest first)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - { name: source_id, in: query, schema: { type: string, format: uuid } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FetchLogListResponse" }
+        "401": { description: Unauthorized }
+
+  /api/v1/logs/check:
+    get:
+      operationId: LogCheckList
+      tags: [logs]
+      summary: List initial check logs (newest first)
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      parameters:
+        - { name: node_id, in: query, schema: { type: string, format: uuid } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckLogListResponse" }
+        "401": { description: Unauthorized }
+
+  # ── Format Configs ─────────────────────────────────────────────────────────
+  /api/v1/format-configs:
+    get:
+      operationId: FormatConfigList
+      tags: [format-configs]
+      summary: List all registered format configurations
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FormatConfigEntry" }
+        "401": { description: Unauthorized }
+
+  /api/v1/format-configs/{format}:
+    parameters:
+      - {
+          name: format,
+          in: path,
+          required: true,
+          schema: { type: string, enum: [clash, singbox, base64] },
+        }
+    get:
+      operationId: FormatConfigGet
+      tags: [format-configs]
+      summary: Get configuration for a specific format
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FormatConfigEntry" }
+        "401": { description: Unauthorized }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      operationId: FormatConfigUpdate
+      tags: [format-configs]
+      summary: Update configuration for a specific format
+      security: [{ AdminJWT: [] }, { ServiceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FormatConfigUpdateRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FormatConfigEntry" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "401": { description: Unauthorized }
+
+  # ── Subscription distribution (public) ─────────────────────────────────────
+  /{format}:
+    get:
+      operationId: Distribute
+      tags: [distribution]
+      summary: Get subscription file in the requested format
+      parameters:
+        - {
+            name: format,
+            in: path,
+            required: true,
+            schema: { type: string, enum: [clash, singbox, base64] },
+          }
+        - {
+            name: preset,
+            in: query,
+            schema:
+              { type: string, enum: [common, all, other], default: common },
+            description: "Node selection preset: common (HK/TW/SG/US/JP priority), all (all regions, UN last), other (non-common regions only)",
+          }
+        - {
+            name: filter_unlock,
+            in: query,
+            schema: { type: string },
+            description: "Vertical bar-separated streaming service names",
+          }
+        - {
+            name: filter_mode,
+            in: query,
+            schema: { type: string, enum: [select, mark], default: select },
+          }
+        - {
+            name: tag,
+            in: query,
+            schema: { type: string },
+            description: "Filter by checker tag",
+          }
+      responses:
+        "200":
+          description: Subscription file content
+          content:
+            text/plain:
+              schema: { type: string }
+            text/yaml:
+              schema: { type: string }
+            application/json:
+              schema: { type: object }
+        "400":
+          description: Unknown format
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: No alive nodes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }

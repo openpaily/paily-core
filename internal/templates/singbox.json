@@ -1,0 +1,182 @@
+{
+    "dns": {
+        "independent_cache": true,
+        "rules": [
+            {
+                "action": "predefined",
+                "rule_set": [
+                    "AdGuardSDNSFilter",
+                    "chrome-doh"
+                ]
+            },
+            {
+                "action": "predefined",
+                "query_type": "HTTPS"
+            },
+            {
+                "query_type": [
+                    "A",
+                    "AAAA"
+                ],
+                "rewrite_ttl": 1,
+                "server": "fakeip"
+            },
+            {
+                "clash_mode": "global",
+                "server": "remote"
+            },
+            {
+                "clash_mode": "direct",
+                "server": "local"
+            },
+            {
+                "rule_set": "geosite-cn",
+                "server": "local"
+            },
+            {
+                "rule_set": "ext-cn-domain",
+                "server": "local"
+            }
+        ],
+        "servers": [
+            {
+                "detour": "select",
+                "server": "8.8.8.8",
+                "tag": "remote",
+                "type": "https"
+            },
+            {
+                "server": "223.5.5.5",
+                "tag": "local",
+                "type": "https"
+            },
+            {
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18",
+                "tag": "fakeip",
+                "type": "fakeip"
+            }
+        ],
+        "strategy": "prefer_ipv4"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true
+        }
+    },
+    "inbounds": [
+        {
+            "address": [
+                "172.19.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
+            "auto_route": true,
+            "endpoint_independent_nat": true,
+            "mtu": 9000,
+            "strict_route": true,
+            "type": "tun"
+        },
+        {
+            "listen": "127.0.0.1",
+            "listen_port": 2333,
+            "tag": "socks-in",
+            "type": "socks",
+            "users": []
+        },
+        {
+            "listen": "127.0.0.1",
+            "listen_port": 2334,
+            "tag": "mixed-in",
+            "type": "mixed",
+            "users": []
+        }
+    ],
+    "log": {},
+    "outbounds": [
+        {
+            "tag": "select",
+            "type": "selector",
+            "default": "urltest",
+            "outbounds": [
+                "urltest",
+                "direct"
+            ]
+        },
+        {
+            "tag": "urltest",
+            "type": "urltest",
+            "outbounds": []
+        },
+        {
+            "tag": "direct",
+            "type": "direct"
+        }
+    ],
+    "route": {
+        "auto_detect_interface": true,
+        "default_domain_resolver": {
+            "server": "local"
+        },
+        "rule_set": [
+            {
+                "format": "binary",
+                "tag": "geoip-cn",
+                "type": "local",
+                "path": "geoip-cn.srs"
+            },
+            {
+                "format": "binary",
+                "tag": "geosite-cn",
+                "type": "local",
+                "path": "geosite-geolocation-cn.srs"
+            },
+            {
+                "format": "binary",
+                "tag": "AdGuardSDNSFilter",
+                "type": "local",
+                "path": "AdGuardSDNSFilterSingBox.srs"
+            },
+            {
+                "format": "source",
+                "tag": "chrome-doh",
+                "type": "local",
+                "path": "chrome-doh.json"
+            },
+            {
+                "format": "binary",
+                "tag": "ext-cn-domain",
+                "type": "local",
+                "path": "ext-cn-list.srs"
+            }
+        ],
+        "rules": [
+            {
+                "action": "sniff"
+            },
+            {
+                "action": "hijack-dns",
+                "protocol": "dns"
+            },
+            {
+                "action": "resolve",
+                "strategy": "prefer_ipv4"
+            },
+            {
+                "clash_mode": "direct",
+                "outbound": "direct"
+            },
+            {
+                "clash_mode": "global",
+                "outbound": "select"
+            },
+            {
+                "ip_is_private": true,
+                "outbound": "direct"
+            },
+            {
+                "outbound": "direct",
+                "rule_set": "geoip-cn"
+            }
+        ]
+    }
+}

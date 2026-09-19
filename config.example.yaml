@@ -1,0 +1,54 @@
+# Paily 主服务配置示例
+#
+# 复制为 config.yaml 后按需修改：
+#   cp config.example.yaml config.yaml
+#
+# 环境变量优先于配置文件，统一使用 PAILY_ 前缀，嵌套键的 "." 替换为 "_"。
+# 例如 server.port 对应 PAILY_SERVER_PORT。
+
+server:
+  # HTTP 监听端口。环境变量：PAILY_SERVER_PORT
+  port: 21380
+  # 允许跨域的浏览器 Origin 精确列表。不要使用 "*"（会被忽略）。
+  # 环境变量：PAILY_SERVER_CORS_ORIGINS
+  cors_origins:
+    - "http://localhost:5173"
+  # 是否记录全部请求；默认 false，只记录错误与警告。
+  # 环境变量：PAILY_SERVER_VERBOSE
+  verbose: false
+
+database:
+  # "postgres" 或 "sqlite"；生产环境建议使用 postgres。
+  # 环境变量：PAILY_DATABASE_TYPE
+  type: postgres
+  # postgres 时为 DSN，sqlite 时为文件路径（例如 ./data/data.db）。
+  # 环境变量：PAILY_DATABASE_DSN
+  dsn: "host=localhost port=5432 user=paily password=change-me dbname=paily sslmode=disable TimeZone=Asia/Shanghai"
+  # 连接池；0 表示使用内置默认值（postgres 为 6/2/30 分钟，sqlite 为 1/1/0）。
+  # 环境变量：PAILY_DATABASE_MAX_OPEN_CONNS
+  max_open_conns: 6
+  # 环境变量：PAILY_DATABASE_MAX_IDLE_CONNS
+  max_idle_conns: 2
+  # 环境变量：PAILY_DATABASE_CONN_MAX_LIFETIME_MINUTES
+  conn_max_lifetime_minutes: 30
+
+auth:
+  # 管理员密码，可使用明文或 bcrypt 哈希；请使用高强度随机值。
+  # 环境变量：PAILY_AUTH_ADMIN_PASSWORD
+  admin_password: "change-me-admin-password"
+  # 服务间共享的 Bearer 密钥，供 Paily Fetch、Paily 测活后端和源提交器使用。
+  # 环境变量：PAILY_AUTH_SERVICE_SECRET
+  service_secret: "change-me-service-secret"
+  # JWT 签名密钥，至少 32 字符。环境变量：PAILY_AUTH_JWT_SECRET
+  jwt_secret: "change-me-jwt-secret-at-least-32-characters"
+
+# 测活后端列表。每个 tag 使用独立且随机的密钥。
+checkers:
+  - tag: "local"
+    secret: "change-me-checker-secret"
+    # 该 tag 的订阅未显式指定 preset 时使用的默认预设，可选 common、all、other。
+    # 留空则回退到全局 default_preset。
+    default_preset: "common"
+
+# 全局默认预设，可选 common、all、other；留空等价于 common。
+default_preset: "common"
